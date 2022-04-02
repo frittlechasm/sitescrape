@@ -1,0 +1,43 @@
+#!/bin/bash
+# A script which parses through sitemap and dumps all urls in the sitemap
+# The urls in a file called urls.txt in the tmp/sites directory 
+
+# Read the SiteMap dump and get all the URLs out. 
+# Process it further incase there are other sitemaps
+function readAndStripUrl() {
+  urls=$(
+    cat $1 \
+      | sed 's#<loc>#\r\n<loc>#g' \
+      | grep loc | grep http \
+      | sed 's#.*loc>\(.*\)<\(.*\)loc>.*#\1#' \
+      | tr " " "\n"
+  ) 
+  for i in ${urls[@]}; do processUrl "$i" & done
+}
+
+
+# Process the Url(s) and create the respective directory and files
+function processUrl() {
+   dir="$(echo $i | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
+   
+   if [[ "$i" != *".xml"* ]]; then
+      echo $i >> $dir/urls.txt
+   else
+     file="$(echo $i | sed 's#.*/\(.*\)#\1#')";
+     mkdir -p $dir && echo "Fetching URLs from site-map: $i"
+     curl -s $i >> $dir/$file 
+     readAndStripUrl "$dir/$file"
+   fi
+}
+
+
+cd /tmp/ && mkdir -p site && cd site
+
+if [ -z $1 ]; then
+  echo "Pass a Site Map URL"
+else
+  for i in $@; do processUrl "$i" & done
+  wait
+  echo "Site Scraped!!"
+fi
+

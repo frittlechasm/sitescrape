@@ -1,0 +1,19 @@
+#!/bin/bash
+# A script which parses through a postgres db and gets table information along with per table information
+
+function fetchDetails() {
+  mkdir -p $1 && psql -c "\d $1" $2 \
+    | tee -a "$1/full-details.txt" \
+    | grep '|' \
+    | grep -vi 'column' \
+    | cut -d'|' -f1 > "$1/columns.txt"
+}
+
+cd /tmp/ && mkdir -p tables && cd tables
+url="postgresql://$1:$2@$3/$4"
+tables=$(psql -Atc '\dt' $url | cut -d'|' -f2 | tee -a tables.txt | tr " " "\n")
+for i in ${tables[@]}; do fetchDetails "$i" "$url" & done
+wait
+echo "DB Scraped!!"
+
+
