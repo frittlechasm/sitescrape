@@ -1,6 +1,7 @@
 # sitescrape
 - A simple script which parses though a sitemap and dumps all urls in the sitemap in a text file
 - All urls get listed in a file called `urls.txt` under `/tmp/site/<domain>/` along with the XML version of each sitemap and nested sitemap.
+- The command exits with a non-zero status if any sitemap cannot be fetched or written, and only reports completion after all nested sitemaps finish.
 
 ## Manual validation
 

@@ -4,7 +4,17 @@
 
 # Read the SiteMap dump and get all the URLs out. 
 # Process it further incase there are other sitemaps
+function waitForJobs() {
+  local pid
+  local status=0
+  for pid in "$@"; do
+    wait "$pid" || status=1
+  done
+  return "$status"
+}
+
 function readAndStripUrl() {
+  local pids=()
   urls=$(
     cat $1 \
       | sed 's#<loc>#\r\n<loc>#g' \
@@ -12,8 +22,11 @@ function readAndStripUrl() {
       | sed 's#.*loc>\(.*\)<\(.*\)loc>.*#\1#' \
       | tr " " "\n"
   ) 
-  for i in ${urls[@]}; do processUrl "$i" & done
-  wait
+  for i in ${urls[@]}; do
+    processUrl "$i" &
+    pids+=("$!")
+  done
+  waitForJobs "${pids[@]}"
 }
 
 
@@ -22,23 +35,35 @@ function processUrl() {
    dir="$(echo $i | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
    
    if [[ "$i" != *".xml"* ]]; then
-      echo $i >> $dir/urls.txt
+      echo "$i" >> "$dir/urls.txt"
    else
      file="$(echo $i | sed 's#.*/\(.*\)#\1#')";
-     mkdir -p $dir && echo "Fetching URLs from site-map: $i"
-     curl -s $i >> $dir/$file 
+     mkdir -p "$dir" || return 1
+     echo "Fetching URLs from site-map: $i"
+     curl -fsSL "$i" >> "$dir/$file" || return 1
      readAndStripUrl "$dir/$file"
    fi
 }
 
 
-cd /tmp/ && mkdir -p site && cd site
+if ! cd /tmp/ || ! mkdir -p site || ! cd site; then
+  echo "Unable to prepare /tmp/site" >&2
+  exit 1
+fi
 
-if [ -z $1 ]; then
-  echo "Pass a Site Map URL"
+if [ "$#" -eq 0 ]; then
+  echo "Pass a Site Map URL" >&2
+  exit 1
 else
-  for i in $@; do processUrl "$i" & done
-  wait
+  pids=()
+  for i in "$@"; do
+    processUrl "$i" &
+    pids+=("$!")
+  done
+  if ! waitForJobs "${pids[@]}"; then
+    echo "Site scrape failed" >&2
+    exit 1
+  fi
   echo "Site Scraped!!"
 fi
 
