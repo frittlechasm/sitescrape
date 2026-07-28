@@ -44,11 +44,29 @@ function readAndStripUrl() {
 
 function getUrlDir() {
   local url="$1"
+  local authority
   local dir
 
-  dir="$(echo "$url" | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')"
+  case "$url" in
+    http://*) authority="${url#http://}" ;;
+    https://*) authority="${url#https://}" ;;
+    *)
+      echo "Unsupported URL scheme: $url" >&2
+      return 1
+      ;;
+  esac
+
+  authority="${authority%%[/?#]*}"
+  case "$authority" in
+    *"@"*)
+      echo "URL credentials are not supported: $url" >&2
+      return 1
+      ;;
+  esac
+
+  dir="${authority#www.}"
   case "$dir" in
-    ""|"."|".."|*/*)
+    ""|"."|".."|*/*|*[[:space:]]*)
       echo "Invalid output domain for URL: $url" >&2
       return 1
       ;;

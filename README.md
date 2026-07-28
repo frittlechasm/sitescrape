@@ -6,6 +6,7 @@
 - Sitemap URLs are fetched in batches of up to five, and each exact sitemap URL is fetched at most once per invocation.
 - Sitemap documents are identified by their `sitemapindex` or `urlset` root element, so sitemap URLs do not need an `.xml` suffix.
 - Every command-line argument must return a sitemap document; page URLs passed directly are rejected.
+- Both HTTP and HTTPS sitemap URLs are supported, and a leading `www.` is omitted from the output directory name.
 
 ## Manual validation
 
