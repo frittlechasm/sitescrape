@@ -13,6 +13,29 @@ function waitForJobs() {
   return "$status"
 }
 
+function cleanupRunDir() {
+  if [ -n "$runDir" ] && [ -d "$runDir" ]; then
+    find "$runDir" -depth -delete
+  fi
+}
+
+function publishSnapshots() {
+  local stagedDir
+  local domain
+  local target
+
+  for stagedDir in "$runDir"/*; do
+    [ -d "$stagedDir" ] || continue
+    domain="${stagedDir##*/}"
+    target="/tmp/site/$domain"
+
+    if [ -e "$target" ]; then
+      find "$target" -depth -delete || return 1
+    fi
+    mv "$stagedDir" "$target" || return 1
+  done
+}
+
 function readAndStripUrl() {
   local pids=()
   urls=$(
@@ -33,15 +56,24 @@ function readAndStripUrl() {
 # Process the Url(s) and create the respective directory and files
 function processUrl() {
    dir="$(echo $i | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
+   case "$dir" in
+     ""|"."|".."|*/*)
+       echo "Invalid output domain for URL: $i" >&2
+       return 1
+       ;;
+   esac
+   outputDir="$runDir/$dir"
    
    if [[ "$i" != *".xml"* ]]; then
-      echo "$i" >> "$dir/urls.txt"
+      echo "$i" >> "$outputDir/urls.txt"
    else
-     file="$(echo $i | sed 's#.*/\(.*\)#\1#')";
-     mkdir -p "$dir" || return 1
+     file="$(printf "%s" "$i" | cksum | tr " " "-").xml"
+     mkdir -p "$outputDir" || return 1
+     tempFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
      echo "Fetching URLs from site-map: $i"
-     curl -fsSL "$i" >> "$dir/$file" || return 1
-     readAndStripUrl "$dir/$file"
+     curl -fsSL "$i" > "$tempFile" || return 1
+     mv "$tempFile" "$outputDir/$file" || return 1
+     readAndStripUrl "$outputDir/$file"
    fi
 }
 
@@ -50,6 +82,12 @@ if ! cd /tmp/ || ! mkdir -p site || ! cd site; then
   echo "Unable to prepare /tmp/site" >&2
   exit 1
 fi
+
+runDir="$(mktemp -d /tmp/sitescrape.XXXXXX)" || {
+  echo "Unable to prepare a temporary output directory" >&2
+  exit 1
+}
+trap cleanupRunDir EXIT
 
 if [ "$#" -eq 0 ]; then
   echo "Pass a Site Map URL" >&2
@@ -62,6 +100,10 @@ else
   done
   if ! waitForJobs "${pids[@]}"; then
     echo "Site scrape failed" >&2
+    exit 1
+  fi
+  if ! publishSnapshots; then
+    echo "Unable to replace previous site results" >&2
     exit 1
   fi
   echo "Site Scraped!!"
