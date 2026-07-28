@@ -42,44 +42,90 @@ function readAndStripUrl() {
     | tr " " "\n"
 }
 
-function enqueueUrls() {
+function getUrlDir() {
+  local url="$1"
+  local dir
+
+  dir="$(echo "$url" | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')"
+  case "$dir" in
+    ""|"."|".."|*/*)
+      echo "Invalid output domain for URL: $url" >&2
+      return 1
+      ;;
+  esac
+  printf "%s\n" "$dir"
+}
+
+function writePageUrl() {
+  local url="$1"
+  local dir
+  local outputDir
+
+  dir="$(getUrlDir "$url")" || return 1
+  outputDir="$runDir/$dir"
+  mkdir -p "$outputDir" || return 1
+  printf "%s\n" "$url" >> "$outputDir/urls.txt"
+}
+
+function mergeResultFile() {
   local resultFile="$1"
+  local documentType
+  local lineNumber=0
   local url
+
+  IFS= read -r documentType < "$resultFile" || return 1
+  case "$documentType" in
+    sitemapindex|urlset) ;;
+    *) return 1 ;;
+  esac
+
   while IFS= read -r url; do
-    [ -z "$url" ] || queue+=("$url")
+    lineNumber=$((lineNumber + 1))
+    [ "$lineNumber" -eq 1 ] && continue
+    [ -z "$url" ] && continue
+
+    if [ "$documentType" = "sitemapindex" ]; then
+      queue+=("$url")
+    else
+      writePageUrl "$url" || return 1
+    fi
   done < "$resultFile"
 }
 
 
-# Process the Url(s) and create the respective directory and files
-function processUrl() {
+# Fetch a sitemap and write its document type and locations to a result file.
+function processSitemap() {
    local url="$1"
    local resultFile="$2"
    local dir
    local outputDir
    local file
    local tempFile
+   local documentType
 
-   dir="$(echo "$url" | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
-   case "$dir" in
-     ""|"."|".."|*/*)
-       echo "Invalid output domain for URL: $url" >&2
-       return 1
-       ;;
-   esac
+   dir="$(getUrlDir "$url")" || return 1
    outputDir="$runDir/$dir"
-   
-   if [[ "$url" != *".xml"* ]]; then
-      echo "$url" >> "$outputDir/urls.txt"
+
+   file="$(printf "%s" "$url" | cksum | tr " " "-").xml"
+   mkdir -p "$outputDir" || return 1
+   tempFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
+   echo "Fetching URLs from site-map: $url"
+   curl -fsSL "$url" > "$tempFile" || return 1
+
+   if grep -Eq '<([[:alnum:]_.-]+:)?sitemapindex([[:space:]/>]|$)' "$tempFile"; then
+     documentType="sitemapindex"
+   elif grep -Eq '<([[:alnum:]_.-]+:)?urlset([[:space:]/>]|$)' "$tempFile"; then
+     documentType="urlset"
    else
-     file="$(printf "%s" "$url" | cksum | tr " " "-").xml"
-     mkdir -p "$outputDir" || return 1
-     tempFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
-     echo "Fetching URLs from site-map: $url"
-     curl -fsSL "$url" > "$tempFile" || return 1
-     readAndStripUrl "$tempFile" > "$resultFile" || return 1
-     mv "$tempFile" "$outputDir/$file" || return 1
+     echo "Unsupported sitemap document: $url" >&2
+     return 1
    fi
+
+   {
+     printf "%s\n" "$documentType"
+     readAndStripUrl "$tempFile" || return 1
+   } > "$resultFile"
+   mv "$tempFile" "$outputDir/$file" || return 1
 }
 
 
@@ -105,7 +151,6 @@ else
   while [ "$queueIndex" -lt "${#queue[@]}" ]; do
     pids=()
     resultFiles=()
-    pageUrls=()
     batchSize=0
     setupFailed=0
 
@@ -113,10 +158,6 @@ else
       url="${queue[$queueIndex]}"
       queueIndex=$((queueIndex + 1))
 
-      if [[ "$url" != *".xml"* ]]; then
-        pageUrls+=("$url")
-        continue
-      fi
       if grep -Fqx "$url" "$seenFile" 2>/dev/null; then
         continue
       fi
@@ -128,7 +169,7 @@ else
         setupFailed=1
         break
       fi
-      processUrl "$url" "$resultFile" &
+      processSitemap "$url" "$resultFile" &
       pids+=("$!")
       resultFiles+=("$resultFile")
       batchSize=$((batchSize + 1))
@@ -140,14 +181,11 @@ else
       echo "Site scrape failed" >&2
       exit 1
     fi
-    for url in "${pageUrls[@]}"; do
-      if ! processUrl "$url" ""; then
-        echo "Site scrape failed" >&2
+    for resultFile in "${resultFiles[@]}"; do
+      if ! mergeResultFile "$resultFile"; then
+        echo "Unable to process sitemap results" >&2
         exit 1
       fi
-    done
-    for resultFile in "${resultFiles[@]}"; do
-      enqueueUrls "$resultFile" || exit 1
       find "$resultFile" -delete || exit 1
     done
   done

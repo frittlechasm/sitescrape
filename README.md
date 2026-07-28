@@ -4,6 +4,8 @@
 - The command exits with a non-zero status if any sitemap cannot be fetched or written, and only reports completion after all nested sitemaps finish.
 - Each successful run deletes and replaces the previous results for every domain processed by that invocation.
 - Sitemap URLs are fetched in batches of up to five, and each exact sitemap URL is fetched at most once per invocation.
+- Sitemap documents are identified by their `sitemapindex` or `urlset` root element, so sitemap URLs do not need an `.xml` suffix.
+- Every command-line argument must return a sitemap document; page URLs passed directly are rejected.
 
 ## Manual validation
 
