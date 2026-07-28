@@ -2,8 +2,6 @@
 # A script which parses through sitemap and dumps all urls in the sitemap
 # The urls in a file called urls.txt in the tmp/sites directory 
 
-# Read the SiteMap dump and get all the URLs out. 
-# Process it further incase there are other sitemaps
 function waitForJobs() {
   local pid
   local status=0
@@ -37,43 +35,50 @@ function publishSnapshots() {
 }
 
 function readAndStripUrl() {
-  local pids=()
-  urls=$(
-    cat $1 \
-      | sed 's#<loc>#\r\n<loc>#g' \
-      | grep loc | grep http \
-      | sed 's#.*loc>\(.*\)<\(.*\)loc>.*#\1#' \
-      | tr " " "\n"
-  ) 
-  for i in ${urls[@]}; do
-    processUrl "$i" &
-    pids+=("$!")
-  done
-  waitForJobs "${pids[@]}"
+  cat "$1" \
+    | sed 's#<loc>#\r\n<loc>#g' \
+    | grep loc | grep http \
+    | sed 's#.*loc>\(.*\)<\(.*\)loc>.*#\1#' \
+    | tr " " "\n"
+}
+
+function enqueueUrls() {
+  local resultFile="$1"
+  local url
+  while IFS= read -r url; do
+    [ -z "$url" ] || queue+=("$url")
+  done < "$resultFile"
 }
 
 
 # Process the Url(s) and create the respective directory and files
 function processUrl() {
-   dir="$(echo $i | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
+   local url="$1"
+   local resultFile="$2"
+   local dir
+   local outputDir
+   local file
+   local tempFile
+
+   dir="$(echo "$url" | sed 's#www.##g' | sed 's#^https://\([^/]*\).*#\1#')";
    case "$dir" in
      ""|"."|".."|*/*)
-       echo "Invalid output domain for URL: $i" >&2
+       echo "Invalid output domain for URL: $url" >&2
        return 1
        ;;
    esac
    outputDir="$runDir/$dir"
    
-   if [[ "$i" != *".xml"* ]]; then
-      echo "$i" >> "$outputDir/urls.txt"
+   if [[ "$url" != *".xml"* ]]; then
+      echo "$url" >> "$outputDir/urls.txt"
    else
-     file="$(printf "%s" "$i" | cksum | tr " " "-").xml"
+     file="$(printf "%s" "$url" | cksum | tr " " "-").xml"
      mkdir -p "$outputDir" || return 1
      tempFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
-     echo "Fetching URLs from site-map: $i"
-     curl -fsSL "$i" > "$tempFile" || return 1
+     echo "Fetching URLs from site-map: $url"
+     curl -fsSL "$url" > "$tempFile" || return 1
+     readAndStripUrl "$tempFile" > "$resultFile" || return 1
      mv "$tempFile" "$outputDir/$file" || return 1
-     readAndStripUrl "$outputDir/$file"
    fi
 }
 
@@ -87,21 +92,65 @@ runDir="$(mktemp -d /tmp/sitescrape.XXXXXX)" || {
   echo "Unable to prepare a temporary output directory" >&2
   exit 1
 }
+seenFile="$runDir/.seen-sitemaps"
 trap cleanupRunDir EXIT
 
 if [ "$#" -eq 0 ]; then
   echo "Pass a Site Map URL" >&2
   exit 1
 else
-  pids=()
-  for i in "$@"; do
-    processUrl "$i" &
-    pids+=("$!")
+  queue=("$@")
+  queueIndex=0
+  maxJobs=5
+  while [ "$queueIndex" -lt "${#queue[@]}" ]; do
+    pids=()
+    resultFiles=()
+    pageUrls=()
+    batchSize=0
+    setupFailed=0
+
+    while [ "$queueIndex" -lt "${#queue[@]}" ] && [ "$batchSize" -lt "$maxJobs" ]; do
+      url="${queue[$queueIndex]}"
+      queueIndex=$((queueIndex + 1))
+
+      if [[ "$url" != *".xml"* ]]; then
+        pageUrls+=("$url")
+        continue
+      fi
+      if grep -Fqx "$url" "$seenFile" 2>/dev/null; then
+        continue
+      fi
+      if ! printf "%s\n" "$url" >> "$seenFile"; then
+        setupFailed=1
+        break
+      fi
+      if ! resultFile="$(mktemp "$runDir/.urls.XXXXXX")"; then
+        setupFailed=1
+        break
+      fi
+      processUrl "$url" "$resultFile" &
+      pids+=("$!")
+      resultFiles+=("$resultFile")
+      batchSize=$((batchSize + 1))
+    done
+
+    batchFailed="$setupFailed"
+    waitForJobs "${pids[@]}" || batchFailed=1
+    if [ "$batchFailed" -ne 0 ]; then
+      echo "Site scrape failed" >&2
+      exit 1
+    fi
+    for url in "${pageUrls[@]}"; do
+      if ! processUrl "$url" ""; then
+        echo "Site scrape failed" >&2
+        exit 1
+      fi
+    done
+    for resultFile in "${resultFiles[@]}"; do
+      enqueueUrls "$resultFile" || exit 1
+      find "$resultFile" -delete || exit 1
+    done
   done
-  if ! waitForJobs "${pids[@]}"; then
-    echo "Site scrape failed" >&2
-    exit 1
-  fi
   if ! publishSnapshots; then
     echo "Unable to replace previous site results" >&2
     exit 1
