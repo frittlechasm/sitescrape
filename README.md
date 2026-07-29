@@ -7,6 +7,21 @@
 - Sitemap documents are identified by their `sitemapindex` or `urlset` root element, so sitemap URLs do not need an `.xml` suffix.
 - Every command-line argument must return a sitemap document; page URLs passed directly are rejected.
 - Both HTTP and HTTPS sitemap URLs are supported, and a leading `www.` is omitted from the output directory name.
+- Namespace-prefixed XML, encoded URL characters, and gzip-compressed sitemap responses are supported.
+
+## Requirements
+
+- Bash 3.2 or newer
+- `curl`
+- `gzip`
+- `od`
+- `xsltproc`
+
+macOS includes these commands. On Debian or Ubuntu, install `xsltproc` if it is not already available:
+
+```bash
+sudo apt-get install xsltproc
+```
 
 ## Manual validation
 

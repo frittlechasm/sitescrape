@@ -34,12 +34,48 @@ function publishSnapshots() {
   done
 }
 
-function readAndStripUrl() {
-  cat "$1" \
-    | sed 's#<loc>#\r\n<loc>#g' \
-    | grep loc | grep http \
-    | sed 's#.*loc>\(.*\)<\(.*\)loc>.*#\1#' \
-    | tr " " "\n"
+function requireCommands() {
+  local dependency
+
+  for dependency in curl gzip od xsltproc; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+      echo "Missing required command: $dependency" >&2
+      return 1
+    fi
+  done
+}
+
+function writeStylesheet() {
+  local stylesheetFile="$1"
+
+  cat > "$stylesheetFile" <<'XSL'
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:output method="text" encoding="UTF-8"/>
+  <xsl:strip-space elements="*"/>
+  <xsl:template match="/">
+    <xsl:choose>
+      <xsl:when test="local-name(/*) = 'sitemapindex'">
+        <xsl:text>sitemapindex&#10;</xsl:text>
+        <xsl:for-each select="/*[local-name() = 'sitemapindex']/*[local-name() = 'sitemap']/*[local-name() = 'loc']">
+          <xsl:value-of select="normalize-space(.)"/>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:when test="local-name(/*) = 'urlset'">
+        <xsl:text>urlset&#10;</xsl:text>
+        <xsl:for-each select="/*[local-name() = 'urlset']/*[local-name() = 'url']/*[local-name() = 'loc']">
+          <xsl:value-of select="normalize-space(.)"/>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:message terminate="yes">Unsupported sitemap root</xsl:message>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+</xsl:stylesheet>
+XSL
 }
 
 function getUrlDir() {
@@ -115,10 +151,13 @@ function mergeResultFile() {
 function processSitemap() {
    local url="$1"
    local resultFile="$2"
+   local stylesheetFile="$3"
    local dir
    local outputDir
    local file
    local tempFile
+   local decompressedFile
+   local fileHeader
    local documentType
 
    dir="$(getUrlDir "$url")" || return 1
@@ -130,22 +169,51 @@ function processSitemap() {
    echo "Fetching URLs from site-map: $url"
    curl -fsSL "$url" > "$tempFile" || return 1
 
-   if grep -Eq '<([[:alnum:]_.-]+:)?sitemapindex([[:space:]/>]|$)' "$tempFile"; then
-     documentType="sitemapindex"
-   elif grep -Eq '<([[:alnum:]_.-]+:)?urlset([[:space:]/>]|$)' "$tempFile"; then
-     documentType="urlset"
-   else
+   fileHeader="$(LC_ALL=C od -An -t x1 -N 4 "$tempFile")" || return 1
+   fileHeader="${fileHeader//[[:space:]]/}"
+   if [ "${fileHeader#1f8b}" != "$fileHeader" ]; then
+     decompressedFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
+     if ! gzip -dc "$tempFile" > "$decompressedFile"; then
+       echo "Unable to decompress sitemap: $url" >&2
+       return 1
+     fi
+     mv "$decompressedFile" "$tempFile" || return 1
+     fileHeader="$(LC_ALL=C od -An -t x1 -N 4 "$tempFile")" || return 1
+     fileHeader="${fileHeader//[[:space:]]/}"
+   fi
+
+   case "$fileHeader" in
+     fffe*|feff*|0000feff*|fffe0000*|003c003f*|3c003f00*|0000003c*|3c000000*|00003c00*|003c0000*)
+       echo "Unsupported sitemap encoding: $url" >&2
+       return 1
+       ;;
+   esac
+
+   if LC_ALL=C grep -q '<!DOCTYPE' "$tempFile"; then
+     echo "Sitemap DOCTYPE is not supported: $url" >&2
+     return 1
+   fi
+
+   if ! xsltproc --nonet "$stylesheetFile" "$tempFile" > "$resultFile"; then
      echo "Unsupported sitemap document: $url" >&2
      return 1
    fi
 
-   {
-     printf "%s\n" "$documentType"
-     readAndStripUrl "$tempFile" || return 1
-   } > "$resultFile"
+   IFS= read -r documentType < "$resultFile" || return 1
+   case "$documentType" in
+     sitemapindex|urlset) ;;
+     *)
+       echo "Unsupported sitemap document: $url" >&2
+       return 1
+       ;;
+   esac
    mv "$tempFile" "$outputDir/$file" || return 1
 }
 
+
+if ! requireCommands; then
+  exit 1
+fi
 
 if ! cd /tmp/ || ! mkdir -p site || ! cd site; then
   echo "Unable to prepare /tmp/site" >&2
@@ -157,7 +225,12 @@ runDir="$(mktemp -d /tmp/sitescrape.XXXXXX)" || {
   exit 1
 }
 seenFile="$runDir/.seen-sitemaps"
+stylesheetFile="$runDir/.sitemap-locations.xsl"
 trap cleanupRunDir EXIT
+if ! writeStylesheet "$stylesheetFile"; then
+  echo "Unable to prepare the sitemap parser" >&2
+  exit 1
+fi
 
 if [ "$#" -eq 0 ]; then
   echo "Pass a Site Map URL" >&2
@@ -187,7 +260,7 @@ else
         setupFailed=1
         break
       fi
-      processSitemap "$url" "$resultFile" &
+      processSitemap "$url" "$resultFile" "$stylesheetFile" &
       pids+=("$!")
       resultFiles+=("$resultFile")
       batchSize=$((batchSize + 1))
