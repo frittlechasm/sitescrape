@@ -1,0 +1,92 @@
+#!/bin/bash
+
+url=""
+for argument in "$@"; do
+  case "$argument" in
+    -*) ;;
+    *) url="$argument" ;;
+  esac
+done
+
+if [ -z "$url" ] || [ -z "$TEST_FIXTURE_DIR" ] || [ -z "$TEST_STATE_DIR" ] || [ -z "$TEST_BASE_URL" ]; then
+  echo "Fake curl is missing test configuration" >&2
+  exit 2
+fi
+
+function acquireLock() {
+  local attempts=0
+
+  while ! mkdir "$TEST_STATE_DIR/lock" 2>/dev/null; do
+    [ -d "$TEST_STATE_DIR" ] || return 1
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 500 ]; then
+      echo "Timed out waiting for the fake curl lock" >&2
+      return 1
+    fi
+    sleep 0.01
+  done
+}
+
+function releaseLock() {
+  rmdir "$TEST_STATE_DIR/lock"
+}
+
+function renderFixture() {
+  sed "s#__BASE_URL__#$TEST_BASE_URL#g" "$TEST_FIXTURE_DIR/$1"
+}
+
+function logCall() {
+  acquireLock || return 1
+  printf "%s\n" "$url" >> "$TEST_STATE_DIR/calls"
+  releaseLock
+}
+
+function finishSlowRequest() {
+  [ -d "$TEST_STATE_DIR" ] || return 0
+  acquireLock || return 0
+  find "$TEST_STATE_DIR/active" -type f -name "$$" -delete
+  releaseLock
+}
+
+function renderSlowSitemap() {
+  local number="$1"
+  local activeCount
+  local maxActive
+
+  acquireLock || return 1
+  : > "$TEST_STATE_DIR/active/$$"
+  activeCount="$(find "$TEST_STATE_DIR/active" -type f | wc -l | tr -d ' ')"
+  maxActive="$(sed -n '1p' "$TEST_STATE_DIR/max-active")"
+  if [ "$activeCount" -gt "$maxActive" ]; then
+    printf "%s\n" "$activeCount" > "$TEST_STATE_DIR/max-active"
+  fi
+  releaseLock
+
+  trap finishSlowRequest EXIT
+  sleep 0.5
+  printf '%s\n' "<?xml version=\"1.0\"?><urlset><url><loc>$TEST_BASE_URL/page-$number</loc></url></urlset>"
+}
+
+logCall || exit 1
+remainder="${url#*://}"
+path="/${remainder#*/}"
+
+case "$path" in
+  /flat) renderFixture flat.xml ;;
+  /index) renderFixture nested-index.xml ;;
+  /child) renderFixture child.xml ;;
+  /namespace-gzip) renderFixture namespace-image.xml | gzip -c ;;
+  /batch-index) renderFixture batch-index.xml ;;
+  /slow-[1-6]) renderSlowSitemap "${path#/slow-}" ;;
+  /empty) renderFixture empty.xml ;;
+  /doctype) renderFixture unsafe-doctype.xml ;;
+  /malformed) renderFixture malformed.xml ;;
+  /html) printf '%s\n' '<html><body>not a sitemap</body></html>' ;;
+  /corrupt-gzip) printf '\037\213\010\000' ;;
+  /utf16) printf '\377\376<\000?\000x\000' ;;
+  /failure) exit 22 ;;
+  *)
+    echo "No fake curl response for $url" >&2
+    exit 22
+    ;;
+esac

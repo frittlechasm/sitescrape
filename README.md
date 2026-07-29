@@ -38,3 +38,13 @@ find /tmp/site -maxdepth 2 -type f
 ```
 
 You should see a domain folder containing `urls.txt` and any fetched sitemap XML files.
+
+## Tests
+
+Run the local behavior suite:
+
+```bash
+./tests/run.sh
+```
+
+The suite uses isolated `.example.test` domains and controlled local fixtures. It does not make network requests or modify results for real domains.

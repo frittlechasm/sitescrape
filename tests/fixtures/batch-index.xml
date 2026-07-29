@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>__BASE_URL__/slow-1</loc></sitemap>
+  <sitemap><loc>__BASE_URL__/slow-2</loc></sitemap>
+  <sitemap><loc>__BASE_URL__/slow-3</loc></sitemap>
+  <sitemap><loc>__BASE_URL__/slow-4</loc></sitemap>
+  <sitemap><loc>__BASE_URL__/slow-5</loc></sitemap>
+  <sitemap><loc>__BASE_URL__/slow-6</loc></sitemap>
+</sitemapindex>

