@@ -1,0 +1,24 @@
+#!/bin/bash
+
+outputFile=""
+sourceUrl=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      outputFile="${1:-}"
+      ;;
+    http://*|https://*) sourceUrl="$1" ;;
+  esac
+  shift
+done
+
+[ -n "$outputFile" ] || exit 1
+[ -n "$sourceUrl" ] || exit 1
+[ -f "${TEST_INSTALL_SOURCE:-}" ] || exit 1
+
+if [ -n "${TEST_INSTALL_CURL_LOG:-}" ]; then
+  printf "%s\n" "$sourceUrl" > "$TEST_INSTALL_CURL_LOG"
+fi
+cp "$TEST_INSTALL_SOURCE" "$outputFile"

@@ -17,10 +17,90 @@
 - `od`
 - `xsltproc`
 
-macOS includes these commands. On Debian or Ubuntu, install `xsltproc` if it is not already available:
+macOS normally includes these commands. On Linux, install the packages for your distribution if they are not already available:
 
 ```bash
-sudo apt-get install xsltproc
+# Debian or Ubuntu
+sudo apt-get update
+sudo apt-get install curl gzip coreutils xsltproc
+
+# Fedora or RHEL
+sudo dnf install curl gzip coreutils libxslt
+
+# Arch Linux
+sudo pacman -S curl gzip coreutils libxslt
+```
+
+The installer reports every missing command and prints instructions for macOS, Debian-based, Fedora-based, Arch, and Alpine systems. It does not install packages or change shell configuration automatically.
+
+## Installation
+
+Download and run the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/install.sh | bash
+```
+
+By default, `sitescrape` is installed at `$HOME/.local/bin/sitescrape`. That directory must already be on `PATH`; the installer exits with instructions if it is not.
+
+To make it available for the current shell without changing shell configuration automatically:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/install.sh | bash
+```
+
+To keep that directory on `PATH` in future shells, add the `export` line to your shell configuration yourself.
+
+To choose another directory on your normal user `PATH`, use `--bin-dir`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/install.sh | sudo bash -s -- --bin-dir /usr/local/bin
+```
+
+An explicit directory is always honored. The installer warns if it is not on the current execution environment's `PATH`, which can happen when `sudo` uses a restricted `PATH`; verify it from your normal shell with `command -v sitescrape`.
+
+The installer checks runtime dependencies before installing anything, downloads and validates the script, installs it with executable permissions, and verifies the installed file. It never invokes `sudo` or modifies shell configuration itself.
+
+To install from a local checkout instead of GitHub:
+
+```bash
+SITESCRAPE_INSTALL_SOURCE=./sitescrape ./install.sh
+```
+
+Confirm which executable your shell finds:
+
+```bash
+command -v sitescrape
+```
+
+### Updating
+
+Rerun the installer with the same options used originally:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/install.sh | bash
+```
+
+For a system-wide installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/install.sh | sudo bash -s -- --bin-dir /usr/local/bin
+```
+
+### Uninstalling
+
+Remove the installed executable. Use the exact path printed by the installer:
+
+```bash
+rm "$HOME/.local/bin/sitescrape"
+```
+
+For the system-wide example above:
+
+```bash
+sudo rm /usr/local/bin/sitescrape
 ```
 
 ## Manual validation

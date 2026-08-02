@@ -82,6 +82,15 @@ function assertFile() {
   fi
 }
 
+function assertExecutable() {
+  local file="$1"
+
+  if [ ! -x "$file" ]; then
+    echo "    file is not executable: $file" >&2
+    return 1
+  fi
+}
+
 function assertNoFile() {
   local file="$1"
 
@@ -256,6 +265,134 @@ function testMissingDependency() {
   assertContains "Missing required command: xsltproc" "$TEST_STATE_DIR/stderr"
 }
 
+function testInstaller() {
+  local installBin
+
+  beginCase installer
+  installBin="$TEST_STATE_DIR/bin"
+  mkdir "$installBin"
+
+  if PATH="$installBin:$PATH" "$repoDir/install.sh" --source "$repoDir/sitescrape" --bin-dir "$installBin" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertEqual 0 "$CLI_STATUS" "installer status" || return 1
+  assertFile "$installBin/sitescrape" || return 1
+  assertExecutable "$installBin/sitescrape" || return 1
+  assertContains "Installed sitescrape at: $installBin/sitescrape" "$TEST_STATE_DIR/stdout" || return 1
+  assertContains "Uninstall with:" "$TEST_STATE_DIR/stdout" || return 1
+
+  if PATH="$installBin:$PATH" "$repoDir/install.sh" --source "$repoDir/sitescrape" --bin-dir "$installBin" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+  assertEqual 0 "$CLI_STATUS" "installer update status"
+}
+
+function testInstallerRequiresPath() {
+  local installHome
+
+  beginCase installer-path
+  installHome="$TEST_STATE_DIR/home"
+  mkdir "$installHome"
+
+  if HOME="$installHome" "$repoDir/install.sh" --source "$repoDir/sitescrape" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertNotEqual 0 "$CLI_STATUS" "installer PATH status" || return 1
+  assertContains "Install directory is not on PATH: $installHome/.local/bin" "$TEST_STATE_DIR/stderr" || return 1
+  assertNoFile "$installHome/.local/bin/sitescrape"
+}
+
+function testInstallerHonorsExplicitDirectory() {
+  local installBin
+
+  beginCase installer-explicit
+  installBin="$TEST_STATE_DIR/bin"
+
+  if "$repoDir/install.sh" --source "$repoDir/sitescrape" --bin-dir "$installBin" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertEqual 0 "$CLI_STATUS" "explicit install directory status" || return 1
+  assertExecutable "$installBin/sitescrape" || return 1
+  assertContains "Warning: install directory is not on the current PATH" "$TEST_STATE_DIR/stderr"
+}
+
+function testInstallerMissingDependencies() {
+  local dependency
+  local dependencyBin
+  local installBin
+
+  beginCase installer-dependencies
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  installBin="$TEST_STATE_DIR/install-bin"
+  mkdir "$dependencyBin"
+
+  for dependency in gzip od uname; do
+    ln -s "$(command -v "$dependency")" "$dependencyBin/$dependency"
+  done
+
+  if PATH="$dependencyBin:$installBin" /bin/bash "$repoDir/install.sh" --source "$repoDir/sitescrape" --bin-dir "$installBin" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertNotEqual 0 "$CLI_STATUS" "installer dependency status" || return 1
+  assertContains "Missing required commands: curl xsltproc" "$TEST_STATE_DIR/stderr" || return 1
+  assertContains "Install the missing dependencies" "$TEST_STATE_DIR/stderr" || return 1
+  assertNoFile "$installBin/sitescrape"
+}
+
+function testInstallerDownloadsSource() {
+  local dependencyBin
+  local expectedUrl
+  local installHome
+  local installBin
+
+  beginCase installer-download
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  installHome="$TEST_STATE_DIR/home"
+  installBin="$installHome/.local/bin"
+  expectedUrl="https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/sitescrape"
+  mkdir -p "$dependencyBin" "$installBin"
+  ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
+
+  if env -u SITESCRAPE_INSTALL_SOURCE -u SITESCRAPE_INSTALL_URL \
+    TEST_INSTALL_SOURCE="$repoDir/sitescrape" \
+    TEST_INSTALL_CURL_LOG="$TEST_STATE_DIR/download-url" \
+    HOME="$installHome" \
+    PATH="$dependencyBin:$installBin:$PATH" \
+    /bin/bash < "$repoDir/install.sh" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertEqual 0 "$CLI_STATUS" "remote installer status" || return 1
+  assertExecutable "$installBin/sitescrape" || return 1
+  assertEqual "$expectedUrl" "$(sed -n '1p' "$TEST_STATE_DIR/download-url")" "download URL"
+}
+
+function testScriptSyntax() {
+  bash -n "$repoDir/sitescrape" && bash -n "$repoDir/install.sh"
+}
+
 function runTest() {
   local name="$1"
   local testFunction="$2"
@@ -280,6 +417,12 @@ runTest "unsafe document rejection" testUnsafeDocumentsPreserveSnapshot
 runTest "empty sitemap" testEmptySitemap
 runTest "five-worker concurrency limit" testConcurrencyLimit
 runTest "missing dependency" testMissingDependency
+runTest "installer" testInstaller
+runTest "installer requires a PATH directory" testInstallerRequiresPath
+runTest "installer honors an explicit directory" testInstallerHonorsExplicitDirectory
+runTest "installer reports missing dependencies" testInstallerMissingDependencies
+runTest "installer downloads its source" testInstallerDownloadsSource
+runTest "script syntax" testScriptSyntax
 
 echo
 echo "$passed passed, $failed failed"
