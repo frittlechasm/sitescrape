@@ -420,7 +420,7 @@ function testInstallerDownloadsSource() {
   dependencyBin="$TEST_STATE_DIR/dependencies"
   installHome="$TEST_STATE_DIR/home"
   installBin="$installHome/.local/bin"
-  expectedUrl="https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/sitescrape"
+  expectedUrl="https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.1/sitescrape"
   mkdir -p "$dependencyBin" "$installBin"
   ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
 

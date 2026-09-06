@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SITESCRAPE_INSTALL_URL="${SITESCRAPE_INSTALL_URL:-https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.0/sitescrape}"
+SITESCRAPE_INSTALL_URL="${SITESCRAPE_INSTALL_URL:-https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.1/sitescrape}"
 sourceLocation="${SITESCRAPE_INSTALL_SOURCE:-$SITESCRAPE_INSTALL_URL}"
 
 function usage() {
