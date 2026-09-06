@@ -110,16 +110,6 @@ function assertContains() {
   fi
 }
 
-function assertNotContains() {
-  local unexpected="$1"
-  local file="$2"
-
-  if grep -Fq "$unexpected" "$file"; then
-    echo "    '$unexpected' unexpectedly found in $file" >&2
-    return 1
-  fi
-}
-
 function fileCount() {
   find "$1" -type f -name "$2" | wc -l | tr -d ' '
 }
@@ -203,11 +193,60 @@ function testXmlAndGzip() {
   runCli "$TEST_BASE_URL/namespace-gzip"
   assertEqual 0 "$CLI_STATUS" "gzip sitemap status" || return 1
   assertEqual "$TEST_BASE_URL/page?a=1&b=2" "$(sed -n '1p' "$TEST_OUTPUT_DIR/urls.txt")" "namespace URL" || return 1
-  assertNotContains "$TEST_BASE_URL/image.jpg" "$TEST_OUTPUT_DIR/urls.txt" || return 1
+  if grep -Fq "$TEST_BASE_URL/image.jpg" "$TEST_OUTPUT_DIR/urls.txt"; then
+    echo "    image URL unexpectedly found in $TEST_OUTPUT_DIR/urls.txt" >&2
+    return 1
+  fi
   xmlFile="$(find "$TEST_OUTPUT_DIR" -type f -name '*.xml' -print -quit)"
   header="$(LC_ALL=C od -An -t x1 -N 2 "$xmlFile")"
   header="${header//[[:space:]]/}"
   assertNotEqual 1f8b "$header" "saved XML compression"
+}
+
+function testLargeMixedDomainUrls() {
+  local expectedPrimary
+  local expectedSecondary
+  local number=1
+  local secondaryOutputDir
+
+  beginCase large
+  expectedPrimary="$TEST_STATE_DIR/expected-primary"
+  expectedSecondary="$TEST_STATE_DIR/expected-secondary"
+  TEST_SECONDARY_DOMAIN="sitescrape-test-$runId-large-secondary.example.test"
+  secondaryOutputDir="/tmp/site/$TEST_SECONDARY_DOMAIN"
+  export TEST_SECONDARY_DOMAIN
+  printf "%s\n" "$secondaryOutputDir" >> "$testRoot/output-dirs"
+  while [ "$number" -le 600 ]; do
+    printf '%s/primary-%s\n' "$TEST_BASE_URL" "$number" >> "$expectedPrimary"
+    printf 'https://%s/secondary-%s\n' "$TEST_SECONDARY_DOMAIN" "$number" >> "$expectedSecondary"
+    number=$((number + 1))
+  done
+  printf '%s/primary-1\n' "$TEST_BASE_URL" >> "$expectedPrimary"
+  printf 'https://%s/secondary-1\n' "$TEST_SECONDARY_DOMAIN" >> "$expectedSecondary"
+
+  runCli "$TEST_BASE_URL/large-mixed"
+  assertEqual 0 "$CLI_STATUS" "large sitemap status" || return 1
+  if ! cmp -s "$expectedPrimary" "$TEST_OUTPUT_DIR/urls.txt"; then
+    echo "    primary-domain URL order or duplicates changed" >&2
+    return 1
+  fi
+  if ! cmp -s "$expectedSecondary" "$secondaryOutputDir/urls.txt"; then
+    echo "    secondary-domain URL order or duplicates changed" >&2
+    return 1
+  fi
+}
+
+function testUnsafePageUrlPreservesSnapshot() {
+  local previousChecksum
+
+  beginCase unsafe-page
+  runCli "$TEST_BASE_URL/flat"
+  assertEqual 0 "$CLI_STATUS" "unsafe page seed status" || return 1
+  previousChecksum="$(checksum "$TEST_OUTPUT_DIR/urls.txt")"
+
+  runCli "$TEST_BASE_URL/unsafe-page"
+  assertNotEqual 0 "$CLI_STATUS" "unsafe page URL status" || return 1
+  assertEqual "$previousChecksum" "$(checksum "$TEST_OUTPUT_DIR/urls.txt")" "snapshot after unsafe page URL"
 }
 
 function testUnsafeDocumentsPreserveSnapshot() {
@@ -282,8 +321,21 @@ function testInstaller() {
   assertEqual 0 "$CLI_STATUS" "installer status" || return 1
   assertFile "$installBin/sitescrape" || return 1
   assertExecutable "$installBin/sitescrape" || return 1
+  if ! cmp -s "$repoDir/sitescrape" "$installBin/sitescrape"; then
+    echo "    installed CLI differs from its source" >&2
+    return 1
+  fi
   assertContains "Installed sitescrape at: $installBin/sitescrape" "$TEST_STATE_DIR/stdout" || return 1
   assertContains "Uninstall with:" "$TEST_STATE_DIR/stdout" || return 1
+
+  if PATH="$fakeBin:$PATH" "$installBin/sitescrape" "$TEST_BASE_URL/flat" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+  assertEqual 0 "$CLI_STATUS" "installed CLI status" || return 1
+  assertEqual "$TEST_BASE_URL/one" "$(sed -n '1p' "$TEST_OUTPUT_DIR/urls.txt")" "installed CLI output" || return 1
 
   if PATH="$installBin:$PATH" "$repoDir/install.sh" --source "$repoDir/sitescrape" --bin-dir "$installBin" \
     > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
@@ -389,10 +441,6 @@ function testInstallerDownloadsSource() {
   assertEqual "$expectedUrl" "$(sed -n '1p' "$TEST_STATE_DIR/download-url")" "download URL"
 }
 
-function testScriptSyntax() {
-  bash -n "$repoDir/sitescrape" && bash -n "$repoDir/install.sh"
-}
-
 function runTest() {
   local name="$1"
   local testFunction="$2"
@@ -413,6 +461,8 @@ runTest "snapshot replacement and failure" testSnapshotReplacementAndFailure
 runTest "HTTP and www normalization" testHttpAndWww
 runTest "unsafe URL rejection" testUnsafeUrls
 runTest "XML namespaces, entities, and gzip" testXmlAndGzip
+runTest "large mixed-domain URL ordering and duplicates" testLargeMixedDomainUrls
+runTest "unsafe page URL preserves snapshot" testUnsafePageUrlPreservesSnapshot
 runTest "unsafe document rejection" testUnsafeDocumentsPreserveSnapshot
 runTest "empty sitemap" testEmptySitemap
 runTest "five-worker concurrency limit" testConcurrencyLimit
@@ -422,7 +472,6 @@ runTest "installer requires a PATH directory" testInstallerRequiresPath
 runTest "installer honors an explicit directory" testInstallerHonorsExplicitDirectory
 runTest "installer reports missing dependencies" testInstallerMissingDependencies
 runTest "installer downloads its source" testInstallerDownloadsSource
-runTest "script syntax" testScriptSyntax
 
 echo
 echo "$passed passed, $failed failed"

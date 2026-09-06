@@ -1,6 +1,5 @@
 #!/bin/bash
-# A script which parses through sitemap and dumps all urls in the sitemap
-# The urls in a file called urls.txt in the tmp/sites directory 
+# Download sitemaps and write page URLs under /tmp/site/<domain>/.
 
 function waitForJobs() {
   local pid
@@ -9,12 +8,6 @@ function waitForJobs() {
     wait "$pid" || status=1
   done
   return "$status"
-}
-
-function cleanupRunDir() {
-  if [ -n "$runDir" ] && [ -d "$runDir" ]; then
-    find "$runDir" -depth -delete
-  fi
 }
 
 function publishSnapshots() {
@@ -34,54 +27,10 @@ function publishSnapshots() {
   done
 }
 
-function requireCommands() {
-  local dependency
-
-  for dependency in curl gzip od xsltproc; do
-    if ! command -v "$dependency" >/dev/null 2>&1; then
-      echo "Missing required command: $dependency" >&2
-      return 1
-    fi
-  done
-}
-
-function writeStylesheet() {
-  local stylesheetFile="$1"
-
-  cat > "$stylesheetFile" <<'XSL'
-<?xml version="1.0" encoding="UTF-8"?>
-<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-  <xsl:output method="text" encoding="UTF-8"/>
-  <xsl:strip-space elements="*"/>
-  <xsl:template match="/">
-    <xsl:choose>
-      <xsl:when test="local-name(/*) = 'sitemapindex'">
-        <xsl:text>sitemapindex&#10;</xsl:text>
-        <xsl:for-each select="/*[local-name() = 'sitemapindex']/*[local-name() = 'sitemap']/*[local-name() = 'loc']">
-          <xsl:value-of select="normalize-space(.)"/>
-          <xsl:text>&#10;</xsl:text>
-        </xsl:for-each>
-      </xsl:when>
-      <xsl:when test="local-name(/*) = 'urlset'">
-        <xsl:text>urlset&#10;</xsl:text>
-        <xsl:for-each select="/*[local-name() = 'urlset']/*[local-name() = 'url']/*[local-name() = 'loc']">
-          <xsl:value-of select="normalize-space(.)"/>
-          <xsl:text>&#10;</xsl:text>
-        </xsl:for-each>
-      </xsl:when>
-      <xsl:otherwise>
-        <xsl:message terminate="yes">Unsupported sitemap root</xsl:message>
-      </xsl:otherwise>
-    </xsl:choose>
-  </xsl:template>
-</xsl:stylesheet>
-XSL
-}
-
-function getUrlDir() {
+# Set the caller's urlDir without spawning a subshell for each page URL.
+function setUrlDir() {
   local url="$1"
   local authority
-  local dir
 
   case "$url" in
     http://*) authority="${url#http://}" ;;
@@ -100,70 +49,61 @@ function getUrlDir() {
       ;;
   esac
 
-  dir="${authority#www.}"
-  case "$dir" in
+  urlDir="${authority#www.}"
+  case "$urlDir" in
     ""|"."|".."|*/*|*[[:space:]]*)
       echo "Invalid output domain for URL: $url" >&2
       return 1
       ;;
   esac
-  printf "%s\n" "$dir"
-}
-
-function writePageUrl() {
-  local url="$1"
-  local dir
-  local outputDir
-
-  dir="$(getUrlDir "$url")" || return 1
-  outputDir="$runDir/$dir"
-  mkdir -p "$outputDir" || return 1
-  printf "%s\n" "$url" >> "$outputDir/urls.txt"
 }
 
 function mergeResultFile() {
-  local resultFile="$1"
   local documentType
-  local lineNumber=0
   local url
+  local urlDir
+  local outputDir
 
-  IFS= read -r documentType < "$resultFile" || return 1
-  case "$documentType" in
-    sitemapindex|urlset) ;;
-    *) return 1 ;;
-  esac
+  {
+    IFS= read -r documentType || return 1
+    case "$documentType" in
+      sitemapindex|urlset) ;;
+      *) return 1 ;;
+    esac
 
-  while IFS= read -r url; do
-    lineNumber=$((lineNumber + 1))
-    [ "$lineNumber" -eq 1 ] && continue
-    [ -z "$url" ] && continue
-
-    if [ "$documentType" = "sitemapindex" ]; then
-      queue+=("$url")
-    else
-      writePageUrl "$url" || return 1
-    fi
-  done < "$resultFile"
+    while IFS= read -r url; do
+      [ -z "$url" ] && continue
+      if [ "$documentType" = "sitemapindex" ]; then
+        queue+=("$url")
+      else
+        setUrlDir "$url" || return 1
+        outputDir="$runDir/$urlDir"
+        if [ ! -d "$outputDir" ]; then
+          mkdir -p "$outputDir" || return 1
+        fi
+        printf "%s\n" "$url" >> "$outputDir/urls.txt" || return 1
+      fi
+    done
+  } < "$1"
 }
-
 
 # Fetch a sitemap and write its document type and locations to a result file.
 function processSitemap() {
    local url="$1"
    local resultFile="$2"
    local stylesheetFile="$3"
-   local dir
+   local urlDir
    local outputDir
    local file
    local tempFile
    local decompressedFile
    local fileHeader
-   local documentType
 
-   dir="$(getUrlDir "$url")" || return 1
-   outputDir="$runDir/$dir"
+   setUrlDir "$url" || return 1
+   outputDir="$runDir/$urlDir"
 
-   file="$(printf "%s" "$url" | cksum | tr " " "-").xml"
+   file="$(printf "%s" "$url" | cksum)"
+   file="${file// /-}.xml"
    mkdir -p "$outputDir" || return 1
    tempFile="$(mktemp "$outputDir/.sitemap.XXXXXX")" || return 1
    echo "Fetching URLs from site-map: $url"
@@ -199,21 +139,16 @@ function processSitemap() {
      return 1
    fi
 
-   IFS= read -r documentType < "$resultFile" || return 1
-   case "$documentType" in
-     sitemapindex|urlset) ;;
-     *)
-       echo "Unsupported sitemap document: $url" >&2
-       return 1
-       ;;
-   esac
    mv "$tempFile" "$outputDir/$file" || return 1
 }
 
 
-if ! requireCommands; then
-  exit 1
-fi
+for dependency in curl gzip od xsltproc; do
+  if ! command -v "$dependency" >/dev/null 2>&1; then
+    echo "Missing required command: $dependency" >&2
+    exit 1
+  fi
+done
 
 if ! cd /tmp/ || ! mkdir -p site || ! cd site; then
   echo "Unable to prepare /tmp/site" >&2
@@ -226,8 +161,36 @@ runDir="$(mktemp -d /tmp/sitescrape.XXXXXX)" || {
 }
 seenFile="$runDir/.seen-sitemaps"
 stylesheetFile="$runDir/.sitemap-locations.xsl"
-trap cleanupRunDir EXIT
-if ! writeStylesheet "$stylesheetFile"; then
+trap 'find "$runDir" -depth -delete' EXIT
+if ! cat > "$stylesheetFile" <<'XSL'
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:output method="text" encoding="UTF-8"/>
+  <xsl:strip-space elements="*"/>
+  <xsl:template match="/">
+    <xsl:choose>
+      <xsl:when test="local-name(/*) = 'sitemapindex'">
+        <xsl:text>sitemapindex&#10;</xsl:text>
+        <xsl:for-each select="/*[local-name() = 'sitemapindex']/*[local-name() = 'sitemap']/*[local-name() = 'loc']">
+          <xsl:value-of select="normalize-space(.)"/>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:when test="local-name(/*) = 'urlset'">
+        <xsl:text>urlset&#10;</xsl:text>
+        <xsl:for-each select="/*[local-name() = 'urlset']/*[local-name() = 'url']/*[local-name() = 'loc']">
+          <xsl:value-of select="normalize-space(.)"/>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:message terminate="yes">Unsupported sitemap root</xsl:message>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+</xsl:stylesheet>
+XSL
+then
   echo "Unable to prepare the sitemap parser" >&2
   exit 1
 fi
@@ -277,7 +240,7 @@ else
         echo "Unable to process sitemap results" >&2
         exit 1
       fi
-      find "$resultFile" -delete || exit 1
+      rm "$resultFile" || exit 1
     done
   done
   if ! publishSnapshots; then

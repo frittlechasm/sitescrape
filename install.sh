@@ -142,12 +142,6 @@ function copySource() {
   esac
 }
 
-function cleanupInstaller() {
-  if [ -n "${downloadFile:-}" ] && [ -f "$downloadFile" ]; then
-    rm -f "$downloadFile"
-  fi
-}
-
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "Run this installer with Bash." >&2
   exit 1
@@ -227,7 +221,7 @@ downloadFile="$(mktemp "${TMPDIR:-/tmp}/sitescrape.XXXXXX")" || {
   echo "Unable to create a temporary download file" >&2
   exit 1
 }
-trap cleanupInstaller EXIT
+trap 'rm -f "$downloadFile"' EXIT
 if ! copySource "$sourceLocation" "$downloadFile"; then
   exit 1
 fi

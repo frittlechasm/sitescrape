@@ -67,6 +67,20 @@ function renderSlowSitemap() {
   printf '%s\n' "<?xml version=\"1.0\"?><urlset><url><loc>$TEST_BASE_URL/page-$number</loc></url></urlset>"
 }
 
+function renderLargeMixedSitemap() {
+  local number=1
+
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?><urlset>'
+  while [ "$number" -le 600 ]; do
+    printf '  <url><loc>%s/primary-%s</loc></url>\n' "$TEST_BASE_URL" "$number"
+    printf '  <url><loc>https://%s/secondary-%s</loc></url>\n' "$TEST_SECONDARY_DOMAIN" "$number"
+    number=$((number + 1))
+  done
+  printf '  <url><loc>%s/primary-1</loc></url>\n' "$TEST_BASE_URL"
+  printf '  <url><loc>https://%s/secondary-1</loc></url>\n' "$TEST_SECONDARY_DOMAIN"
+  printf '%s\n' '</urlset>'
+}
+
 logCall || exit 1
 remainder="${url#*://}"
 path="/${remainder#*/}"
@@ -77,6 +91,8 @@ case "$path" in
   /child) renderFixture child.xml ;;
   /namespace-gzip) renderFixture namespace-image.xml | gzip -c ;;
   /batch-index) renderFixture batch-index.xml ;;
+  /large-mixed) renderLargeMixedSitemap ;;
+  /unsafe-page) printf '%s\n' "<?xml version=\"1.0\"?><urlset><url><loc>$TEST_BASE_URL/replacement</loc></url><url><loc>https://user:pass@${TEST_BASE_URL#*://}/private</loc></url></urlset>" ;;
   /slow-[1-6]) renderSlowSitemap "${path#/slow-}" ;;
   /empty) renderFixture empty.xml ;;
   /doctype) renderFixture unsafe-doctype.xml ;;

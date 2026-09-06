@@ -20,16 +20,17 @@ Please keep pull requests limited to a single change when possible. For larger i
 - Update `README.md` when behavior or usage changes
 - Run `bash -n sitescrape` before submitting
 
-## Manual Validation
+## Validation
 
-In addition to `bash -n sitescrape`, please do a quick runtime check:
+Run syntax checks and the fixture-based CLI tests:
 
 ```bash
-./sitescrape https://example.com/sitemap.xml
-find /tmp/site -maxdepth 2 -type f
+bash -n sitescrape
+bash -n install.sh
+bash tests/run.sh
 ```
 
-Confirm that `/tmp/site/<domain>/` contains `urls.txt` plus any downloaded sitemap XML files.
+The tests exercise the real scripts with a fake `curl`, so they do not need network access. They use unique directories under `/tmp/site` and clean them up afterward.
 
 ## Maintainer
 
