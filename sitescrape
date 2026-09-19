@@ -1,6 +1,68 @@
 #!/bin/bash
 # Download sitemaps and write page URLs under /tmp/site/<domain>/.
 
+SITESCRAPE_UPDATE_INSTALLER_URL="${SITESCRAPE_UPDATE_INSTALLER_URL:-https://raw.githubusercontent.com/frittlechasm/sitescrape/main/install.sh}"
+
+function updateSitescrape() {
+  local commandPath="$0"
+  local executableDir
+  local executableName
+  local status=0
+  local updateInstaller
+
+  if [ "$#" -ne 0 ]; then
+    echo "Usage: sitescrape update" >&2
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Missing required command: curl" >&2
+    return 1
+  fi
+
+  case "$commandPath" in
+    */*) ;;
+    *) commandPath="$(command -v "$commandPath" 2>/dev/null)" ;;
+  esac
+  if [ -z "$commandPath" ]; then
+    echo "Unable to locate the current sitescrape executable" >&2
+    return 1
+  fi
+  executableName="${commandPath##*/}"
+  if [ "$executableName" != "sitescrape" ]; then
+    echo "Unable to update an executable named: $executableName" >&2
+    return 1
+  fi
+  executableDir="${commandPath%/*}"
+  [ "$executableDir" != "$commandPath" ] || executableDir="."
+  executableDir="$(cd "$executableDir" 2>/dev/null && pwd -P)" || {
+    echo "Unable to resolve the sitescrape install directory" >&2
+    return 1
+  }
+
+  updateInstaller="$(mktemp "${TMPDIR:-/tmp}/sitescrape-update.XXXXXX")" || {
+    echo "Unable to create a temporary update file" >&2
+    return 1
+  }
+  trap 'rm -f "$updateInstaller"' EXIT
+
+  echo "Checking for the latest sitescrape release..."
+  if ! curl -fsSL "$SITESCRAPE_UPDATE_INSTALLER_URL" -o "$updateInstaller"; then
+    echo "Unable to download the sitescrape installer" >&2
+    status=1
+  elif [ ! -s "$updateInstaller" ] || ! "$BASH" -n "$updateInstaller"; then
+    echo "Downloaded sitescrape installer failed validation" >&2
+    status=1
+  elif ! "$BASH" "$updateInstaller" --bin-dir "$executableDir"; then
+    echo "Unable to update sitescrape" >&2
+    status=1
+  else
+    echo "sitescrape is up to date."
+  fi
+  rm -f "$updateInstaller"
+  trap - EXIT
+  return "$status"
+}
+
 function waitForJobs() {
   local pid
   local status=0
@@ -142,6 +204,11 @@ function processSitemap() {
    mv "$tempFile" "$outputDir/$file" || return 1
 }
 
+if [ "${1:-}" = "update" ]; then
+  shift
+  updateSitescrape "$@"
+  exit $?
+fi
 
 for dependency in curl gzip od xsltproc; do
   if ! command -v "$dependency" >/dev/null 2>&1; then
@@ -249,4 +316,3 @@ else
   fi
   echo "Site Scraped!!"
 fi
-

@@ -304,6 +304,77 @@ function testMissingDependency() {
   assertContains "Missing required command: xsltproc" "$TEST_STATE_DIR/stderr"
 }
 
+function testUpdate() {
+  local dependencyBin
+  local installBin
+  local replacement
+
+  beginCase update
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  installBin="$TEST_STATE_DIR/bin"
+  replacement="$TEST_STATE_DIR/replacement"
+  mkdir "$dependencyBin" "$installBin"
+  ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
+  cp "$repoDir/sitescrape" "$installBin/sitescrape"
+  chmod +x "$installBin/sitescrape"
+  cat > "$replacement" <<'REPLACEMENT'
+#!/bin/bash
+echo "updated sitescrape"
+REPLACEMENT
+
+  if TEST_INSTALL_SOURCE="$repoDir/install.sh" \
+    TEST_INSTALL_CURL_LOG="$TEST_STATE_DIR/download-url" \
+    SITESCRAPE_INSTALL_SOURCE="$replacement" \
+    PATH="$dependencyBin:$installBin:$PATH" \
+    "$installBin/sitescrape" update \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertEqual 0 "$CLI_STATUS" "update status" || return 1
+  if ! cmp -s "$replacement" "$installBin/sitescrape"; then
+    echo "    updated CLI differs from the latest release" >&2
+    return 1
+  fi
+  assertExecutable "$installBin/sitescrape" || return 1
+  assertEqual "https://raw.githubusercontent.com/frittlechasm/sitescrape/main/install.sh" \
+    "$(sed -n '1p' "$TEST_STATE_DIR/download-url")" "update installer URL" || return 1
+  assertContains "sitescrape is up to date." "$TEST_STATE_DIR/stdout"
+}
+
+function testUpdateRejectsInvalidInstaller() {
+  local dependencyBin
+  local installBin
+  local invalidInstaller
+  local previousChecksum
+
+  beginCase update-invalid
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  installBin="$TEST_STATE_DIR/bin"
+  invalidInstaller="$TEST_STATE_DIR/invalid-installer"
+  mkdir "$dependencyBin" "$installBin"
+  ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
+  cp "$repoDir/sitescrape" "$installBin/sitescrape"
+  chmod +x "$installBin/sitescrape"
+  printf '%s\n' '#!/bin/bash' 'if then' > "$invalidInstaller"
+  previousChecksum="$(checksum "$installBin/sitescrape")"
+
+  if TEST_INSTALL_SOURCE="$invalidInstaller" \
+    PATH="$dependencyBin:$installBin:$PATH" \
+    "$installBin/sitescrape" update \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertNotEqual 0 "$CLI_STATUS" "invalid update status" || return 1
+  assertEqual "$previousChecksum" "$(checksum "$installBin/sitescrape")" "CLI after invalid update" || return 1
+  assertContains "Downloaded sitescrape installer failed validation" "$TEST_STATE_DIR/stderr"
+}
+
 function testInstaller() {
   local installBin
 
@@ -467,6 +538,8 @@ runTest "unsafe document rejection" testUnsafeDocumentsPreserveSnapshot
 runTest "empty sitemap" testEmptySitemap
 runTest "five-worker concurrency limit" testConcurrencyLimit
 runTest "missing dependency" testMissingDependency
+runTest "self-update" testUpdate
+runTest "invalid update installer" testUpdateRejectsInvalidInstaller
 runTest "installer" testInstaller
 runTest "installer requires a PATH directory" testInstallerRequiresPath
 runTest "installer honors an explicit directory" testInstallerHonorsExplicitDirectory

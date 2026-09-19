@@ -48,7 +48,13 @@ curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/main/instal
 
 The installer checks dependencies, downloads and validates the script, and installs it with executable permissions. It does not install packages, invoke `sudo`, or modify your shell configuration.
 
-To update, rerun the same installation command. To uninstall, remove the installed executable:
+To check for and install the latest release, run:
+
+```bash
+sitescrape update
+```
+
+To uninstall, remove the installed executable:
 
 ```bash
 rm "$HOME/.local/bin/sitescrape"
