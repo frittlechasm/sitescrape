@@ -46,8 +46,6 @@ To install somewhere else, pass `--bin-dir`:
 curl -fsSL https://raw.githubusercontent.com/frittlechasm/sitescrape/main/install.sh | sudo bash -s -- --bin-dir /usr/local/bin
 ```
 
-The installer checks dependencies, downloads and validates the script, and installs it with executable permissions. It does not install packages, invoke `sudo`, or modify your shell configuration.
-
 To check for and install the latest release, run:
 
 ```bash

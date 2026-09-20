@@ -7,4 +7,4 @@
 - Keep CI deferred unless requested.
 - Update `README.md` when usage, installation, or behavior changes.
 - Keep development and validation instructions in `CONTRIBUTING.md`.
-- Keep README installer links on `main`, with the installer's payload pinned to a release tag. Update that payload tag when preparing a release.
+- Keep README installer links on `main`. The installer must resolve the latest published release and download its payload from that immutable release tag.

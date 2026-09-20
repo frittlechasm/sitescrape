@@ -1,7 +1,8 @@
 #!/bin/bash
 
-SITESCRAPE_INSTALL_URL="${SITESCRAPE_INSTALL_URL:-https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.2/sitescrape}"
-sourceLocation="${SITESCRAPE_INSTALL_SOURCE:-$SITESCRAPE_INSTALL_URL}"
+SITESCRAPE_RELEASE_API_URL="${SITESCRAPE_RELEASE_API_URL:-https://api.github.com/repos/frittlechasm/sitescrape/releases/latest}"
+SITESCRAPE_RAW_BASE_URL="${SITESCRAPE_RAW_BASE_URL:-https://raw.githubusercontent.com/frittlechasm/sitescrape}"
+sourceLocation="${SITESCRAPE_INSTALL_SOURCE:-${SITESCRAPE_INSTALL_URL:-}}"
 
 function usage() {
   cat <<'USAGE'
@@ -12,8 +13,27 @@ The default directory is $HOME/.local/bin.
 
 Environment:
   SITESCRAPE_INSTALL_SOURCE  Local file or URL to install from
-  SITESCRAPE_INSTALL_URL     Default download URL
+  SITESCRAPE_INSTALL_URL     Download URL override
+  SITESCRAPE_RELEASE_API_URL Latest-release API URL
+  SITESCRAPE_RAW_BASE_URL    Tagged release download base URL
 USAGE
+}
+
+function resolveLatestSource() {
+  local latestRelease
+  local latestTag
+
+  if ! latestRelease="$(curl -fsSL "$SITESCRAPE_RELEASE_API_URL")"; then
+    echo "Unable to determine the latest sitescrape release" >&2
+    return 1
+  fi
+  latestTag="$(printf "%s\n" "$latestRelease" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed -n '1p')"
+  if ! printf "%s\n" "$latestTag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "Latest sitescrape release has an invalid or missing tag" >&2
+    return 1
+  fi
+
+  printf "%s/%s/sitescrape\n" "$SITESCRAPE_RAW_BASE_URL" "$latestTag"
 }
 
 function printLinuxInstructions() {
@@ -222,6 +242,9 @@ downloadFile="$(mktemp "${TMPDIR:-/tmp}/sitescrape.XXXXXX")" || {
   exit 1
 }
 trap 'rm -f "$downloadFile"' EXIT
+if [ -z "$sourceLocation" ]; then
+  sourceLocation="$(resolveLatestSource)" || exit 1
+fi
 if ! copySource "$sourceLocation" "$downloadFile"; then
   exit 1
 fi

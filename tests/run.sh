@@ -483,6 +483,7 @@ function testInstallerMissingDependencies() {
 
 function testInstallerDownloadsSource() {
   local dependencyBin
+  local expectedApiUrl
   local expectedUrl
   local installHome
   local installBin
@@ -491,13 +492,17 @@ function testInstallerDownloadsSource() {
   dependencyBin="$TEST_STATE_DIR/dependencies"
   installHome="$TEST_STATE_DIR/home"
   installBin="$installHome/.local/bin"
-  expectedUrl="https://raw.githubusercontent.com/frittlechasm/sitescrape/v0.1.2/sitescrape"
+  expectedApiUrl="https://api.github.com/repos/frittlechasm/sitescrape/releases/latest"
+  expectedUrl="https://raw.githubusercontent.com/frittlechasm/sitescrape/v9.8.7/sitescrape"
   mkdir -p "$dependencyBin" "$installBin"
   ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
 
   if env -u SITESCRAPE_INSTALL_SOURCE -u SITESCRAPE_INSTALL_URL \
+    -u SITESCRAPE_RELEASE_API_URL -u SITESCRAPE_RAW_BASE_URL \
     TEST_INSTALL_SOURCE="$repoDir/sitescrape" \
     TEST_INSTALL_CURL_LOG="$TEST_STATE_DIR/download-url" \
+    TEST_INSTALL_RELEASE_API_URL="$expectedApiUrl" \
+    TEST_INSTALL_RELEASE_TAG="v9.8.7" \
     HOME="$installHome" \
     PATH="$dependencyBin:$installBin:$PATH" \
     /bin/bash < "$repoDir/install.sh" \
@@ -509,7 +514,78 @@ function testInstallerDownloadsSource() {
 
   assertEqual 0 "$CLI_STATUS" "remote installer status" || return 1
   assertExecutable "$installBin/sitescrape" || return 1
-  assertEqual "$expectedUrl" "$(sed -n '1p' "$TEST_STATE_DIR/download-url")" "download URL"
+  assertEqual "$expectedApiUrl" "$(sed -n '1p' "$TEST_STATE_DIR/download-url")" "release API URL" || return 1
+  assertEqual "$expectedUrl" "$(sed -n '2p' "$TEST_STATE_DIR/download-url")" "download URL"
+}
+
+function testInstallerPreservesExistingOnReleaseApiFailure() {
+  local dependencyBin
+  local expectedApiUrl
+  local installBin
+  local previousChecksum
+
+  beginCase installer-release-api-failure
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  expectedApiUrl="https://api.github.com/repos/frittlechasm/sitescrape/releases/latest"
+  installBin="$TEST_STATE_DIR/bin"
+  mkdir -p "$dependencyBin" "$installBin"
+  ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
+  printf '%s\n' '#!/bin/bash' 'echo existing' > "$installBin/sitescrape"
+  chmod +x "$installBin/sitescrape"
+  previousChecksum="$(checksum "$installBin/sitescrape")"
+
+  if env -u SITESCRAPE_INSTALL_SOURCE -u SITESCRAPE_INSTALL_URL \
+    -u SITESCRAPE_RELEASE_API_URL -u SITESCRAPE_RAW_BASE_URL \
+    TEST_INSTALL_CURL_LOG="$TEST_STATE_DIR/download-url" \
+    TEST_INSTALL_RELEASE_API_URL="$expectedApiUrl" \
+    TEST_INSTALL_RELEASE_API_FAIL=1 \
+    PATH="$dependencyBin:$installBin:$PATH" \
+    /bin/bash -s -- --bin-dir "$installBin" < "$repoDir/install.sh" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertNotEqual 0 "$CLI_STATUS" "release API failure status" || return 1
+  assertEqual "$previousChecksum" "$(checksum "$installBin/sitescrape")" "existing install after API failure" || return 1
+  assertEqual 1 "$(wc -l < "$TEST_STATE_DIR/download-url" | tr -d ' ')" "release API request count" || return 1
+  assertContains "Unable to determine the latest sitescrape release" "$TEST_STATE_DIR/stderr"
+}
+
+function testInstallerRejectsInvalidReleaseTag() {
+  local dependencyBin
+  local expectedApiUrl
+  local installBin
+  local previousChecksum
+
+  beginCase installer-invalid-release-tag
+  dependencyBin="$TEST_STATE_DIR/dependencies"
+  expectedApiUrl="https://api.github.com/repos/frittlechasm/sitescrape/releases/latest"
+  installBin="$TEST_STATE_DIR/bin"
+  mkdir -p "$dependencyBin" "$installBin"
+  ln -s "$fakeBin/install-curl" "$dependencyBin/curl"
+  printf '%s\n' '#!/bin/bash' 'echo existing' > "$installBin/sitescrape"
+  chmod +x "$installBin/sitescrape"
+  previousChecksum="$(checksum "$installBin/sitescrape")"
+
+  if env -u SITESCRAPE_INSTALL_SOURCE -u SITESCRAPE_INSTALL_URL \
+    -u SITESCRAPE_RELEASE_API_URL -u SITESCRAPE_RAW_BASE_URL \
+    TEST_INSTALL_CURL_LOG="$TEST_STATE_DIR/download-url" \
+    TEST_INSTALL_RELEASE_API_URL="$expectedApiUrl" \
+    TEST_INSTALL_RELEASE_TAG="not-a-version" \
+    PATH="$dependencyBin:$installBin:$PATH" \
+    /bin/bash -s -- --bin-dir "$installBin" < "$repoDir/install.sh" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    CLI_STATUS=0
+  else
+    CLI_STATUS=$?
+  fi
+
+  assertNotEqual 0 "$CLI_STATUS" "invalid release tag status" || return 1
+  assertEqual "$previousChecksum" "$(checksum "$installBin/sitescrape")" "existing install after invalid tag" || return 1
+  assertEqual 1 "$(wc -l < "$TEST_STATE_DIR/download-url" | tr -d ' ')" "release API request count" || return 1
+  assertContains "Latest sitescrape release has an invalid or missing tag" "$TEST_STATE_DIR/stderr"
 }
 
 function runTest() {
@@ -545,6 +621,8 @@ runTest "installer requires a PATH directory" testInstallerRequiresPath
 runTest "installer honors an explicit directory" testInstallerHonorsExplicitDirectory
 runTest "installer reports missing dependencies" testInstallerMissingDependencies
 runTest "installer downloads its source" testInstallerDownloadsSource
+runTest "installer preserves existing install after release API failure" testInstallerPreservesExistingOnReleaseApiFailure
+runTest "installer rejects an invalid latest release tag" testInstallerRejectsInvalidReleaseTag
 
 echo
 echo "$passed passed, $failed failed"

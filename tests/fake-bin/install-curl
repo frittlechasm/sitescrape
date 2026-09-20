@@ -14,11 +14,24 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-[ -n "$outputFile" ] || exit 1
 [ -n "$sourceUrl" ] || exit 1
-[ -f "${TEST_INSTALL_SOURCE:-}" ] || exit 1
 
 if [ -n "${TEST_INSTALL_CURL_LOG:-}" ]; then
-  printf "%s\n" "$sourceUrl" > "$TEST_INSTALL_CURL_LOG"
+  printf "%s\n" "$sourceUrl" >> "$TEST_INSTALL_CURL_LOG"
 fi
+
+if [ "$sourceUrl" = "${TEST_INSTALL_RELEASE_API_URL:-}" ]; then
+  if [ "${TEST_INSTALL_RELEASE_API_FAIL:-0}" -eq 1 ]; then
+    exit 22
+  fi
+  if [ -n "$outputFile" ]; then
+    printf '{"tag_name":"%s"}\n' "${TEST_INSTALL_RELEASE_TAG:-v0.0.0}" > "$outputFile"
+  else
+    printf '{"tag_name":"%s"}\n' "${TEST_INSTALL_RELEASE_TAG:-v0.0.0}"
+  fi
+  exit 0
+fi
+
+[ -n "$outputFile" ] || exit 1
+[ -f "${TEST_INSTALL_SOURCE:-}" ] || exit 1
 cp "$TEST_INSTALL_SOURCE" "$outputFile"
