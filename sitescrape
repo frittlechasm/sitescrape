@@ -82,6 +82,10 @@ function publishSnapshots() {
     domain="${stagedDir##*/}"
     target="/tmp/site/$domain"
 
+    if [ -L "$target" ] || { [ -e "$target" ] && { [ ! -d "$target" ] || [ ! -O "$target" ]; }; }; then
+      echo "Refusing to replace unsafe output path: $target" >&2
+      return 1
+    fi
     if [ -e "$target" ]; then
       find "$target" -depth -delete || return 1
     fi
@@ -217,8 +221,14 @@ for dependency in curl gzip od xsltproc; do
   fi
 done
 
-if ! cd /tmp/ || ! mkdir -p site || ! cd site; then
-  echo "Unable to prepare /tmp/site" >&2
+# /tmp is shared: reject pre-created links or foreign directories before changing anything.
+mkdir -m 700 /tmp/site 2>/dev/null || true
+if [ -L /tmp/site ] || [ ! -d /tmp/site ] || [ ! -O /tmp/site ]; then
+  echo "Refusing unsafe output directory: /tmp/site" >&2
+  exit 1
+fi
+if ! chmod 700 /tmp/site || ! cd /tmp/site; then
+  echo "Unable to secure /tmp/site" >&2
   exit 1
 fi
 

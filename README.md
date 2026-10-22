@@ -18,6 +18,9 @@ Results are written to `/tmp/site/<domain>/`:
 
 `urls.txt` contains one page URL per line. A successful run replaces the previous results for each domain processed by that command.
 
+The output root must be a real directory owned by the current user. It is created or tightened to mode 0700.
+Symlinked or foreign-owned output paths are rejected. Run the scraper as your normal user.
+
 You can process more than one sitemap at once:
 
 ```bash

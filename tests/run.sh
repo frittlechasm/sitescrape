@@ -135,6 +135,57 @@ function testFlatSitemap() {
   assertEqual 1 "$(fileCount "$TEST_OUTPUT_DIR" '*.xml')" "saved sitemap count"
 }
 
+function testUnsafeOutputRoot() {
+  local outputRoot
+  local safeTarget
+  local isolatedCli
+  local mode
+
+  beginCase unsafe-output-root
+  outputRoot="$TEST_STATE_DIR/output"
+  safeTarget="$TEST_STATE_DIR/keep"
+  isolatedCli="$TEST_STATE_DIR/sitescrape"
+  mkdir "$safeTarget"
+  printf 'keep me\n' > "$safeTarget/marker"
+  # Relocate only the fixed output root so the test never replaces the real /tmp/site.
+  sed "s#/tmp/site#$outputRoot#g" "$repoDir/sitescrape" > "$isolatedCli"
+  ln -s "$safeTarget" "$outputRoot"
+  if PATH="$fakeBin:$PATH" bash "$isolatedCli" "$TEST_BASE_URL/flat" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    echo "    symlinked output root unexpectedly accepted" >&2
+    return 1
+  fi
+  assertContains "Refusing unsafe output directory" "$TEST_STATE_DIR/stderr" || return 1
+  assertContains "keep me" "$safeTarget/marker" || return 1
+  assertEqual 0 "$(wc -l < "$TEST_STATE_DIR/calls" | tr -d ' ')" "unsafe root fetch count" || return 1
+  rm "$outputRoot"
+  printf 'keep me\n' > "$outputRoot"
+  if PATH="$fakeBin:$PATH" bash "$isolatedCli" "$TEST_BASE_URL/flat" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr"; then
+    echo "    non-directory output root unexpectedly accepted" >&2
+    return 1
+  fi
+  assertContains "keep me" "$outputRoot" || return 1
+  rm "$outputRoot"
+  mkdir -m 755 "$outputRoot"
+  PATH="$fakeBin:$PATH" bash "$isolatedCli" "$TEST_BASE_URL/flat" \
+    > "$TEST_STATE_DIR/stdout" 2> "$TEST_STATE_DIR/stderr" || return 1
+  mode="$(stat -f '%Lp' "$outputRoot" 2>/dev/null)" || mode="$(stat -c '%a' "$outputRoot")"
+  assertEqual 700 "$mode" "private output root mode"
+}
+
+function testSymlinkedDomainOutput() {
+  beginCase symlinked-domain
+  mkdir -p /tmp/site "$TEST_STATE_DIR/keep"
+  printf 'keep me\n' > "$TEST_STATE_DIR/keep/marker"
+  ln -s "$TEST_STATE_DIR/keep" "$TEST_OUTPUT_DIR"
+  runCli "$TEST_BASE_URL/flat"
+  assertNotEqual 0 "$CLI_STATUS" "symlinked domain status" || return 1
+  assertContains "Refusing to replace unsafe output path" "$TEST_STATE_DIR/stderr" || return 1
+  assertContains "keep me" "$TEST_STATE_DIR/keep/marker" || return 1
+  assertNoFile "$TEST_STATE_DIR/keep/urls.txt"
+}
+
 function testNestedDeduplication() {
   beginCase nested
   runCli "$TEST_BASE_URL/index"
@@ -603,6 +654,8 @@ function runTest() {
 
 runTest "missing arguments" testMissingArguments
 runTest "flat sitemap" testFlatSitemap
+runTest "unsafe output root and private permissions" testUnsafeOutputRoot
+runTest "symlinked domain output is preserved" testSymlinkedDomainOutput
 runTest "nested sitemap deduplication" testNestedDeduplication
 runTest "snapshot replacement and failure" testSnapshotReplacementAndFailure
 runTest "HTTP and www normalization" testHttpAndWww
